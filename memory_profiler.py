@@ -19,6 +19,7 @@ import time
 import traceback
 import warnings
 import contextlib
+import asyncio
 
 if sys.platform == "win32":
     # any value except signal.CTRL_C_EVENT and signal.CTRL_BREAK_EVENT
@@ -699,13 +700,21 @@ class LineProfiler(object):
     def wrap_function(self, func):
         """ Wrap a function to profile it.
         """
-
-        def f(*args, **kwds):
-            self.enable_by_count()
-            try:
-                return func(*args, **kwds)
-            finally:
-                self.disable_by_count()
+        if asyncio.iscoroutinefunction(func):
+            async def f(*args, **kwds):
+                self.enable_by_count()
+                try:
+                    return await func(*args, **kwds)
+                finally:
+                    self.disable_by_count()
+            
+        else:
+            def f(*args, **kwds):
+                self.enable_by_count()
+                try:
+                    return func(*args, **kwds)
+                finally:
+                    self.disable_by_count()
 
         return f
 
@@ -1114,13 +1123,20 @@ def profile(func=None, stream=None, precision=1, backend='psutil'):
         if not tracemalloc.is_tracing():
             tracemalloc.start()
     if func is not None:
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            prof = LineProfiler(backend=backend)
-            val = prof(func)(*args, **kwargs)
-            show_results(prof, stream=stream, precision=precision)
-            return val
-
+        if asyncio.iscoroutinefunction(func):
+            @wraps(func)
+            async def wrapper(*args, **kwargs):
+                prof = LineProfiler(backend=backend)
+                val = await (prof(func)(*args, **kwargs))
+                show_results(prof, stream=stream, precision=precision)
+                return val
+        else:
+            @wraps(func)
+            def wrapper(*args, **kwargs):
+                prof = LineProfiler(backend=backend)
+                val = prof(func)(*args, **kwargs)
+                show_results(prof, stream=stream, precision=precision)
+                return val
         return wrapper
     else:
         def inner_wrapper(f):
